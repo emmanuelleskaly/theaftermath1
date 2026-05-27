@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<!-- saved from url=(0058)file:///C:/Users/skaly/Downloads/america-wizard-v29_5.html -->
+<!-- saved from url=(0059)file:///C:/Users/skaly/Downloads/america-wizard-v29_12.html -->
 <html lang="en"><head><meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -195,89 +195,97 @@ body { background:#000; height:100vh; overflow:hidden; user-select:none; -webkit
 .mag-btn{position:absolute;bottom:5px;right:5px;background:rgba(255,255,255,0.85);border:none;border-radius:50%;width:20px;height:20px;font-size:11px;cursor:pointer;z-index:2;padding:0;}
 .loc-btn.indent{padding-left:22px;font-size:12px;opacity:0.8;}
 </style>
-<script src="./index_files/firebase-app-compat.js.download"></script>
-<script src="./index_files/firebase-database-compat.js.download"></script>
+
 <script>
-var db, roomCode=null, isHost=false, isSyncing=false;
-function mpInit(){
-  firebase.initializeApp({
-    apiKey:"AIzaSyABumPbcyk9zgHMT5oa4djeHOBtmuEFxpo",
-    authDomain:"aftermath-v1.firebaseapp.com",
-    databaseURL:"https://aftermath-v1-default-rtdb.firebaseio.com",
-    projectId:"aftermath-v1",
-    storageBucket:"aftermath-v1.firebasestorage.app",
-    messagingSenderId:"862999499990",
-    appId:"1:862999499990:web:5f734a43bb9a640f68e577"
-  });
-  db=firebase.database();
-}
+var DB_URL = "https://aftermath-v1-default-rtdb.firebaseio.com";
+var roomCode = null;
+var isHost = false;
+var syncInterval = null;
+var lastSyncTime = 0;
+
 function generateCode(){ return Math.random().toString(36).substr(2,6).toUpperCase(); }
-function createRoom(){
-  roomCode=generateCode();
-  isHost=true;
-  db.ref('rooms/'+roomCode).set({created:Date.now()});
-  db.ref('rooms/'+roomCode+'/state').on('value',onRemoteState);
-  document.getElementById('mp-lobby').style.display='none';
-  document.getElementById('mp-code').style.display='block';
-  document.getElementById('mp-code').textContent='Room: '+roomCode;
-  document.getElementById('mp-status').textContent='Share this code with your players';
-  document.getElementById('mp-status').style.display='block';
+
+function mpFetch(path, method, data){
+  var url = DB_URL + path + ".json";
+  var opts = { method: method || "GET", headers: {"Content-Type":"application/json"} };
+  if(data) opts.body = JSON.stringify(data);
+  return fetch(url, opts).then(function(r){
+    if(!r.ok){ return r.text().then(function(t){ throw new Error(r.status+': '+t); }); }
+    return r.json();
+  });
 }
-function joinRoom(){
-  var code=document.getElementById('mp-input').value.trim().toUpperCase();
-  if(!code){alert('Enter a room code');return;}
-  db.ref('rooms/'+code).once('value').then(function(s){
-    if(!s.exists()){alert('Room not found');return;}
-    roomCode=code; isHost=false;
-    db.ref('rooms/'+roomCode+'/state').on('value',onRemoteState);
+
+function createRoom(){
+  roomCode = generateCode();
+  isHost = true;
+  mpFetch("/rooms/"+roomCode, "PUT", {created: Date.now()}).then(function(res){
+    alert('Room created! Code: '+roomCode);
     document.getElementById('mp-lobby').style.display='none';
     document.getElementById('mp-code').style.display='block';
-    document.getElementById('mp-code').textContent='Room: '+roomCode;
-    document.getElementById('mp-status').textContent='Joined! Waiting for host...';
+    document.getElementById('mp-code').textContent = roomCode;
     document.getElementById('mp-status').style.display='block';
-  });
+    document.getElementById('mp-status').textContent = 'Share this code with your players';
+    // Start pushing state every 2 seconds
+    syncInterval = setInterval(pushState, 2000);
+  }).catch(function(e){ alert("Error: "+e.message); });
+
 }
+
+function joinRoom(){
+  var code = document.getElementById('mp-input').value.trim().toUpperCase();
+  if(!code){ alert('Enter a room code'); return; }
+  mpFetch("/rooms/"+code, "GET").then(function(data){
+    if(!data){ alert('Room not found'); return; }
+    roomCode = code; isHost = false;
+    document.getElementById('mp-lobby').style.display='none';
+    document.getElementById('mp-code').style.display='block';
+    document.getElementById('mp-code').textContent = roomCode;
+    document.getElementById('mp-status').style.display='block';
+    document.getElementById('mp-status').textContent = 'Joined! Following host...';
+    // Poll for state every 2 seconds
+    syncInterval = setInterval(pollState, 2000);
+  }).catch(function(e){ alert("Error: "+e.message); });
+
+}
+
 function pushState(){
-  if(!roomCode||isSyncing||!isHost) return;
-  db.ref('rooms/'+roomCode+'/state').set({
-    viewPages:viewPages, viewPos:viewPos, phase:phase,
-    locIdx:locIdx, chosenMissionIdx:chosenMissionIdx,
-    selectedChars:selectedChars, playerCount:playerCount,
-    gameStarted:gameStarted, inIntro:inIntro, introPos:introPos,
-    failedMissions:window._failedMissions||[],
-    retryCount:window._retryCount||0,
-    readSpeakers:window._readSpeakers||[],
-    t:Date.now()
+  if(!roomCode || !isHost) return;
+  var state = {
+    viewPages: viewPages, viewPos: viewPos, phase: phase,
+    locIdx: locIdx, chosenMissionIdx: chosenMissionIdx,
+    selectedChars: selectedChars, playerCount: playerCount,
+    gameStarted: gameStarted, inIntro: inIntro, introPos: introPos,
+    failedMissions: window._failedMissions||[],
+    retryCount: window._retryCount||0,
+    readSpeakers: window._readSpeakers||[],
+    t: Date.now()
+  };
+  mpFetch("/rooms/"+roomCode+"/state", "PUT", state);
+}
+
+function pollState(){
+  if(!roomCode || isHost) return;
+  mpFetch("/rooms/"+roomCode+"/state", "GET").then(function(s){
+    if(!s || s.t === lastSyncTime) return;
+    lastSyncTime = s.t;
+    if(s.viewPages) viewPages = s.viewPages;
+    viewPos = s.viewPos || 0;
+    phase = s.phase || phase;
+    locIdx = s.locIdx || 0;
+    chosenMissionIdx = s.chosenMissionIdx;
+    if(s.selectedChars) selectedChars = s.selectedChars;
+    playerCount = s.playerCount || 1;
+    gameStarted = s.gameStarted || false;
+    inIntro = s.inIntro !== undefined ? s.inIntro : inIntro;
+    introPos = s.introPos || 0;
+    window._failedMissions = s.failedMissions || [];
+    window._retryCount = s.retryCount || 0;
+    window._readSpeakers = s.readSpeakers || [];
+    if(inIntro){ showIntro(introPos); }
+    else if(viewPages && viewPages.length){ showPage(viewPages[viewPos]); updateActionPanel(); }
+    if(gameStarted) updatePlayersStrip();
   });
 }
-function onRemoteState(snap){
-  if(!snap.exists()||isHost) return;
-  var s=snap.val(); if(!s) return;
-  isSyncing=true;
-  if(s.viewPages) viewPages=s.viewPages;
-  viewPos=s.viewPos||0; phase=s.phase||'intro';
-  locIdx=s.locIdx||0; chosenMissionIdx=s.chosenMissionIdx;
-  if(s.selectedChars) selectedChars=s.selectedChars;
-  playerCount=s.playerCount||1;
-  gameStarted=s.gameStarted||false;
-  inIntro=s.inIntro!==undefined?s.inIntro:true;
-  introPos=s.introPos||0;
-  window._failedMissions=s.failedMissions||[];
-  window._retryCount=s.retryCount||0;
-  window._readSpeakers=s.readSpeakers||[];
-  if(inIntro){ showIntro(introPos); }
-  else if(viewPages&&viewPages.length){ showPage(viewPages[viewPos]); updateActionPanel(); }
-  if(gameStarted) updatePlayersStrip();
-  isSyncing=false;
-}
-window.addEventListener('load', function(){
-  mpInit();
-  // Wrap navigation to push state
-  var _go=go; go=function(d){_go(d);setTimeout(pushState,300);};
-  var _si=showIntro; showIntro=function(p){_si(p);setTimeout(pushState,300);};
-  var _sl=startLocation; startLocation=function(i){_sl(i);setTimeout(pushState,300);};
-  var _fc=finishCharSelect; finishCharSelect=function(){_fc();setTimeout(pushState,300);};
-});
 </script>
 </head>
 <body>
@@ -290,7 +298,7 @@ window.addEventListener('load', function(){
 
 <div id="bottom-bar">
   <button class="bar-btn" onclick="goBack()">Back</button>
-  <button class="bar-btn" onclick="document.getElementById(&#39;mp-overlay&#39;).style.display=&#39;flex&#39;" style="color:#c9a84c;">ONLINE MULTIPLAYER</button>
+  <button class="bar-btn" onclick="document.getElementById(&#39;mp-overlay&#39;).style.display=&#39;flex&#39;" style="color:#c9a84c;font-size:10px;">ONLINE MULTIPLAYER</button>
   <div id="counter">1 / 121</div>
   
   <button class="bar-btn" onclick="openOverlay(&#39;jump-overlay&#39;)">Jump</button>
@@ -1412,14 +1420,14 @@ function goPunishment(){ var loc=LOCATIONS[locIdx]; if(loc.punishment&&loc.punis
 </div>
 
 <div id="mp-overlay" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.97);z-index:10000;flex-direction:column;align-items:center;justify-content:center;gap:16px;padding:30px;">
-  <h2 style="color:#f0d080;letter-spacing:3px;font-size:18px;">MULTIPLAYER</h2>
+  <h2 style="color:#f0d080;letter-spacing:3px;font-size:18px;">ONLINE MULTIPLAYER</h2>
   <div id="mp-lobby" style="display:flex;flex-direction:column;gap:12px;width:100%;max-width:300px;">
     <button onclick="createRoom()" style="padding:14px;background:rgba(201,168,76,0.15);border:1px solid #c9a84c;color:#f0d080;font-size:14px;letter-spacing:2px;border-radius:4px;cursor:pointer;">CREATE ROOM</button>
     <div style="text-align:center;color:rgba(255,255,255,0.3);font-size:12px;">— OR —</div>
     <input id="mp-input" placeholder="ENTER ROOM CODE" style="padding:12px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.2);color:white;font-size:16px;letter-spacing:3px;border-radius:4px;text-align:center;text-transform:uppercase;">
     <button onclick="joinRoom()" style="padding:14px;background:rgba(255,255,255,0.07);border:1px solid rgba(255,255,255,0.2);color:white;font-size:14px;letter-spacing:2px;border-radius:4px;cursor:pointer;">JOIN ROOM</button>
   </div>
-  <div id="mp-code" style="display:none;font-size:28px;font-weight:bold;color:#f0d080;letter-spacing:6px;"></div>
+  <div id="mp-code" style="display:none;font-size:36px;font-weight:bold;color:#f0d080;letter-spacing:8px;text-align:center;"></div>
   <div id="mp-status" style="display:none;color:rgba(255,255,255,0.5);font-size:13px;text-align:center;"></div>
   <button onclick="document.getElementById(&#39;mp-overlay&#39;).style.display=&#39;none&#39;" style="margin-top:8px;padding:10px 24px;background:none;border:1px solid rgba(255,255,255,0.2);color:rgba(255,255,255,0.5);font-size:12px;letter-spacing:2px;border-radius:4px;cursor:pointer;">CLOSE</button>
 </div>
