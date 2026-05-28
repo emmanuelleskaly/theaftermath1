@@ -237,8 +237,8 @@ body { background:#000; height:100vh; overflow:hidden; user-select:none; -webkit
 <div id="char-overlay" class="overlay">
   <h2>Inception Cards</h2>
   <p class="sub" id="char-sub"></p>
-  <button class="close-btn" id="char-done-btn" onclick="finishCharSelect()" style="opacity:0.3;pointer-events:none;margin-bottom:12px;">START</button>
   <div class="char-grid" id="char-grid"></div>
+  <button class="close-btn" id="char-done-btn" onclick="finishCharSelect()" style="opacity:0.3;pointer-events:none;">Start</button>
 </div>
 
 <!-- ════════ DICE ════════ -->
@@ -271,226 +271,168 @@ body { background:#000; height:100vh; overflow:hidden; user-select:none; -webkit
 </div>
 
 <script>
-// ═══════════════════════════════════════════
-// MULTIPLAYER ENGINE
-// ═══════════════════════════════════════════
-var DB_URL = "https://aftermath-v1-default-rtdb.firebaseio.com";
-var mp = {
-  roomCode: null,
-  isHost: false,
-  myCharId: null,        // this player's chosen character
-  myCharConfirmed: false,
-  missionChooser: null,  // charId of who won mission roll
-  syncInterval: null,
-  pollInterval: null,
-  lastStateTime: 0,
-  playerCount: 1
-};
+var DB_URL="https://aftermath-v1-default-rtdb.firebaseio.com";
+var mp={roomCode:null,isHost:false,myCharId:null,myCharConfirmed:false,missionChooser:null,pollInterval:null,lastStateTime:0,playerCount:1};
 
-function mpFetch(path, method, data) {
-  var url = DB_URL + path + ".json";
-  var opts = { method: method || "GET", headers: { "Content-Type": "application/json" } };
-  if (data !== undefined) opts.body = JSON.stringify(data);
-  return fetch(url, opts).then(function(r) {
-    if (!r.ok) throw new Error(r.status);
-    return r.json();
-  });
+function openMpOverlay(){ document.getElementById('mp-overlay').style.display='flex'; }
+function generateCode(){ return Math.random().toString(36).substr(2,6).toUpperCase(); }
+
+function mpFetch(path,method,data){
+  var url=DB_URL+path+".json";
+  var opts={method:method||"GET",headers:{"Content-Type":"application/json"}};
+  if(data!==undefined) opts.body=JSON.stringify(data);
+  return fetch(url,opts).then(function(r){ if(!r.ok) throw new Error(r.status); return r.json(); });
 }
 
-function openMpOverlay() {
-  document.getElementById('mp-overlay').style.display = 'flex';
+function createRoom(){
+  mp.roomCode=generateCode(); mp.isHost=true;
+  mpFetch("/rooms/"+mp.roomCode,"PUT",{created:Date.now(),takenChars:{},confirmedChars:{},hostPlayerCount:0})
+  .then(function(){
+    document.getElementById('mp-lobby').style.display='none';
+    document.getElementById('mp-code').textContent=mp.roomCode;
+    document.getElementById('mp-code').style.display='block';
+    document.getElementById('mp-status').textContent='Share this code with your players';
+    document.getElementById('mp-status').style.display='block';
+    mp.pollInterval=setInterval(mpPoll,1500);
+  }).catch(function(e){ alert("Error: "+e.message); });
 }
 
-function generateCode() {
-  return Math.random().toString(36).substr(2, 6).toUpperCase();
-}
-
-function createRoom() {
-  mp.roomCode = generateCode();
-  mp.isHost = true;
-  mpFetch("/rooms/" + mp.roomCode, "PUT", {
-    created: Date.now(),
-    takenChars: {},
-    confirmedChars: {},
-    hostPlayerCount: 0
-  }).then(function() {
-    document.getElementById('mp-lobby').style.display = 'none';
-    document.getElementById('mp-code').textContent = mp.roomCode;
-    document.getElementById('mp-code').style.display = 'block';
-    document.getElementById('mp-status').textContent = 'Share this code with your players';
-    document.getElementById('mp-status').style.display = 'block';
-    mp.pollInterval = setInterval(mpPoll, 1500);
-  }).catch(function(e) { alert("Error creating room: " + e.message); });
-}
-
-function joinRoom() {
-  var code = document.getElementById('mp-input').value.trim().toUpperCase();
-  if (!code) { alert('Enter a room code'); return; }
-  mpFetch("/rooms/" + code, "GET").then(function(data) {
-    if (!data) { alert('Room not found'); return; }
-    mp.roomCode = code;
-    mp.isHost = false;
-    document.getElementById('mp-lobby').style.display = 'none';
-    document.getElementById('mp-code').textContent = mp.roomCode;
-    document.getElementById('mp-code').style.display = 'block';
-    document.getElementById('mp-status').textContent = 'Joined! Pick your character below.';
-    document.getElementById('mp-status').style.display = 'block';
-    mp.pollInterval = setInterval(mpPoll, 1500);
-    // Close overlay and go to char select
-    document.getElementById('mp-overlay').style.display = 'none';
+function joinRoom(){
+  var code=document.getElementById('mp-input').value.trim().toUpperCase();
+  if(!code){ alert('Enter a room code'); return; }
+  mpFetch("/rooms/"+code,"GET").then(function(data){
+    if(!data){ alert('Room not found'); return; }
+    mp.roomCode=code; mp.isHost=false;
+    document.getElementById('mp-lobby').style.display='none';
+    document.getElementById('mp-code').textContent=mp.roomCode;
+    document.getElementById('mp-code').style.display='block';
+    document.getElementById('mp-status').textContent='Joined! Pick your character.';
+    document.getElementById('mp-status').style.display='block';
+    mp.pollInterval=setInterval(mpPoll,1500);
+    document.getElementById('mp-overlay').style.display='none';
     openOverlay('char-overlay');
-  }).catch(function(e) { alert("Error: " + e.message); });
+  }).catch(function(e){ alert("Error: "+e.message); });
 }
 
-// Called when a player taps a character card
-function mpClaimChar(charId) {
-  if (!mp.roomCode) return;
-  // Release previous claim
-  if (mp.myCharId && mp.myCharId !== charId) {
-    mpFetch("/rooms/" + mp.roomCode + "/takenChars/" + mp.myCharId, "DELETE");
+function mpClaimChar(charId){
+  if(!mp.roomCode) return;
+  if(mp.myCharId && mp.myCharId!==charId){
+    mpFetch("/rooms/"+mp.roomCode+"/takenChars/"+mp.myCharId,"DELETE");
   }
-  mp.myCharId = charId;
-  mp.myCharConfirmed = false;
-  mpFetch("/rooms/" + mp.roomCode + "/takenChars/" + charId, "PUT", Date.now());
+  mp.myCharId=charId;
+  mp.myCharConfirmed=false;
+  mpFetch("/rooms/"+mp.roomCode+"/takenChars/"+charId,"PUT",Date.now());
 }
 
-// Called when player taps DONE on char select
-function mpConfirmChar() {
-  if (!mp.myCharId) { alert('Pick a character first'); return; }
-  mp.myCharConfirmed = true;
-  mpFetch("/rooms/" + mp.roomCode + "/confirmedChars/" + mp.myCharId, "PUT", true);
-  document.getElementById('char-done-btn').disabled = true;
-  document.getElementById('char-done-btn').textContent = 'WAITING...';
+function mpConfirmChar(){
+  if(!mp.myCharId){ alert('Pick a character first'); return; }
+  mp.myCharConfirmed=true;
+  mpFetch("/rooms/"+mp.roomCode+"/confirmedChars/"+mp.myCharId,"PUT",true);
 }
 
-// Host pushes full game state
-function mpPushGameState() {
-  if (!mp.roomCode || !mp.isHost) return;
-  mpFetch("/rooms/" + mp.roomCode + "/gameState", "PUT", {
-    viewPages: viewPages, viewPos: viewPos, phase: phase,
-    locIdx: locIdx, chosenMissionIdx: chosenMissionIdx,
-    selectedChars: selectedChars, playerCount: playerCount,
-    gameStarted: gameStarted, inIntro: inIntro, introPos: introPos,
-    failedMissions: window._failedMissions || [],
-    retryCount: window._retryCount || 0,
-    readSpeakers: window._readSpeakers || [],
-    missionChooser: mp.missionChooser,
-    t: Date.now()
+function mpPushGameState(){
+  if(!mp.roomCode||!mp.isHost) return;
+  mpFetch("/rooms/"+mp.roomCode+"/gameState","PUT",{
+    viewPages:viewPages,viewPos:viewPos,phase:phase,
+    locIdx:locIdx,chosenMissionIdx:chosenMissionIdx,
+    selectedChars:selectedChars,playerCount:playerCount,
+    gameStarted:gameStarted,inIntro:inIntro,introPos:introPos,
+    failedMissions:window._failedMissions||[],
+    retryCount:window._retryCount||0,
+    readSpeakers:window._readSpeakers||[],
+    missionChooser:mp.missionChooser,
+    t:Date.now()
   });
 }
 
-// Host pushes dice roll result for a character
-function mpPushRoll(charId, skillName, roll, total) {
-  if (!mp.roomCode) return;
-  var rollData = { charId: charId, skill: skillName, roll: roll, total: total, t: Date.now() };
-  mpFetch("/rooms/" + mp.roomCode + "/rolls/" + charId, "PUT", rollData);
+function mpSetMissionChooser(charId){
+  mp.missionChooser=charId;
+  if(mp.roomCode&&mp.isHost) mpFetch("/rooms/"+mp.roomCode+"/gameState/missionChooser","PUT",charId);
 }
 
-// Poll Firebase for updates
-function mpPoll() {
-  if (!mp.roomCode) return;
-  mpFetch("/rooms/" + mp.roomCode, "GET").then(function(data) {
-    if (!data) return;
-
-    // Update taken/confirmed chars in char grid
-    var taken = data.takenChars || {};
-    var confirmed = data.confirmedChars || {};
-    mpUpdateCharGrid(taken, confirmed);
-
-    // Non-host: follow game state
-    if (!mp.isHost && data.gameState) {
-      var s = data.gameState;
-      if (s.t === mp.lastStateTime) return;
-      mp.lastStateTime = s.t;
-      mp.missionChooser = s.missionChooser || null;
-      if (s.viewPages) viewPages = s.viewPages;
-      viewPos = s.viewPos || 0;
-      phase = s.phase || phase;
-      locIdx = s.locIdx || 0;
-      chosenMissionIdx = s.chosenMissionIdx;
-      if (s.selectedChars) selectedChars = s.selectedChars;
-      playerCount = s.playerCount || 1;
-      gameStarted = s.gameStarted || false;
-      inIntro = s.inIntro !== undefined ? s.inIntro : inIntro;
-      introPos = s.introPos || 0;
-      window._failedMissions = s.failedMissions || [];
-      window._retryCount = s.retryCount || 0;
-      window._readSpeakers = s.readSpeakers || [];
-      if (inIntro) { showIntro(introPos); }
-      else if (viewPages && viewPages.length) { showPage(viewPages[viewPos]); updateActionPanel(); }
-      if (gameStarted) updatePlayersStrip();
-    }
-
-    // All: show live dice rolls
-    if (data.rolls) {
-      mpShowRolls(data.rolls);
-    }
-
-    // Check if all players confirmed chars - host starts game
-    if (mp.isHost && data.confirmedChars && data.hostPlayerCount > 0) {
-      var confirmedCount = Object.keys(data.confirmedChars).length;
-      if (confirmedCount >= data.hostPlayerCount && confirmedCount > 0 && !gameStarted) {
-        // All confirmed - start game on host
-        selectedChars = Object.keys(data.confirmedChars);
-        gameStarted = true;
-        inIntro = false;
-        updatePlayersStrip();
-        startLocation(0);
-        mpPushGameState();
-        setTimeout(mpPushGameState, 500);
-        setTimeout(mpPushGameState, 1000);
-        closeOverlay('char-overlay');
-      }
-    }
-  }).catch(function() {});
+function mpCanChooseMission(){
+  if(!mp.roomCode) return true;
+  if(mp.isHost&&!mp.missionChooser) return true;
+  return mp.missionChooser===mp.myCharId;
 }
 
-function mpUpdateCharGrid(taken, confirmed) {
-  CHARACTERS.forEach(function(c) {
-    var cards = document.querySelectorAll('.char-card');
-    cards.forEach(function(card) {
-      var img = card.querySelector('img');
-      if (!img) return;
-      // Match by image src containing the page number
-      var pageStr = String(c.pages[0]);
-      if (img.src && img.src.indexOf && IMGS[pageStr] && img.src === IMGS[pageStr]) {
-        var isMine = (c.id === mp.myCharId);
-        var isTaken = taken[c.id] && !isMine;
-        var isConfirmed = confirmed[c.id];
-        card.style.opacity = (isTaken || isConfirmed) && !isMine ? '0.35' : '1';
-        card.style.pointerEvents = (isTaken || isConfirmed) && !isMine ? 'none' : '';
-        if (isConfirmed && isMine) {
-          card.style.outline = '3px solid #4caf50';
-        }
+function mpCanNavigate(){
+  if(!mp.roomCode) return true;
+  return mp.isHost;
+}
+
+function mpUpdateCharGrid(taken,confirmed){
+  var cards=document.querySelectorAll('.char-card');
+  cards.forEach(function(card){
+    var img=card.querySelector('img');
+    if(!img) return;
+    CHARACTERS.forEach(function(c){
+      if(img.src===IMGS[String(c.pages[0])]||img.getAttribute('data-charid')===c.id){
+        var isMine=(c.id===mp.myCharId);
+        var isTakenByOther=taken[c.id]&&!isMine;
+        var isConfirmedByOther=confirmed[c.id]&&!isMine;
+        card.style.opacity=(isTakenByOther||isConfirmedByOther)?'0.35':'1';
+        card.style.pointerEvents=(isTakenByOther||isConfirmedByOther)?'none':'';
+        if(confirmed[c.id]&&isMine) card.style.outline='3px solid #4caf50';
+        else card.style.outline='';
       }
     });
   });
 }
 
-function mpShowRolls(rolls) {
-  // Show a small roll indicator in the dice UI if it's open
-  var list = document.getElementById('player-rolls-list');
-  if (!list) return;
-  // Rolls are shown inline by the existing dice UI - this just ensures remote rolls show
-}
+function mpPoll(){
+  if(!mp.roomCode) return;
+  mpFetch("/rooms/"+mp.roomCode,"GET").then(function(data){
+    if(!data) return;
+    var taken=data.takenChars||{};
+    var confirmed=data.confirmedChars||{};
+    mpUpdateCharGrid(taken,confirmed);
 
-// Track who won mission picker roll
-function mpSetMissionChooser(charId) {
-  mp.missionChooser = charId;
-  if (mp.roomCode && mp.isHost) {
-    mpFetch("/rooms/" + mp.roomCode + "/gameState/missionChooser", "PUT", charId);
-  }
-}
+    // HOST: check if all players confirmed
+    if(mp.isHost&&data.hostPlayerCount>0){
+      var count=Object.keys(confirmed).length;
+      if(count>=data.hostPlayerCount&&!gameStarted){
+        selectedChars=Object.keys(confirmed);
+        gameStarted=true; inIntro=false;
+        updatePlayersStrip();
+        startLocation(0);
+        // Push state 3 times to make sure non-hosts get it
+        mpPushGameState();
+        setTimeout(mpPushGameState,600);
+        setTimeout(mpPushGameState,1200);
+        document.querySelectorAll('.overlay').forEach(function(o){ o.classList.remove('open'); });
+      }
+    }
 
-function mpCanChooseMission() {
-  if (!mp.roomCode) return true; // single player - always can
-  if (mp.isHost && !mp.missionChooser) return true;
-  return mp.missionChooser === mp.myCharId;
-}
-
-function mpCanNavigate() {
-  if (!mp.roomCode) return true; // single player
-  return mp.isHost;
+    // NON-HOST: follow game state
+    if(!mp.isHost&&data.gameState){
+      var s=data.gameState;
+      if(s.t===mp.lastStateTime) return;
+      mp.lastStateTime=s.t;
+      mp.missionChooser=s.missionChooser||null;
+      var wasStarted=gameStarted;
+      if(s.selectedChars) selectedChars=s.selectedChars;
+      playerCount=s.playerCount||1;
+      gameStarted=s.gameStarted||false;
+      inIntro=s.inIntro!==undefined?s.inIntro:inIntro;
+      introPos=s.introPos||0;
+      if(s.viewPages) viewPages=s.viewPages;
+      viewPos=s.viewPos||0;
+      phase=s.phase||phase;
+      locIdx=s.locIdx||0;
+      chosenMissionIdx=s.chosenMissionIdx;
+      window._failedMissions=s.failedMissions||[];
+      window._retryCount=s.retryCount||0;
+      window._readSpeakers=s.readSpeakers||[];
+      // Game just started - close all overlays
+      if(gameStarted&&!wasStarted){
+        document.querySelectorAll('.overlay').forEach(function(o){ o.classList.remove('open'); });
+        updatePlayersStrip();
+      }
+      if(inIntro){ showIntro(introPos); }
+      else if(viewPages&&viewPages.length){ showPage(viewPages[viewPos]); updateActionPanel(); }
+    }
+  }).catch(function(){});
 }
 
 </script>
@@ -574,7 +516,7 @@ function setView(pages, pos, skipHistory){
   prev.classList.toggle('hidden', viewPos===0);
   next.classList.toggle('hidden', viewPos===viewPages.length-1);
   updateActionPanel();
-  if(mp.roomCode && mp.isHost) setTimeout(mpPushGameState,200);
+  if(mp.roomCode&&mp.isHost) setTimeout(mpPushGameState,200);
 }
 
 function go(dir){
@@ -617,7 +559,7 @@ function resizeCard(){
 
 function updateActionPanel(){
   var mpBtn=document.getElementById('mp-btn'); if(mpBtn) mpBtn.style.display=(inIntro||!gameStarted)?'':'none';
-  if(mp.roomCode && !mp.isHost){ var pnl=document.getElementById('action-panel'); if(pnl){ pnl.innerHTML=''; pnl.classList.remove('open'); } return; }
+  if(mp.roomCode&&!mp.isHost){ var pnl=document.getElementById('action-panel'); if(pnl){ pnl.innerHTML=''; pnl.classList.remove('open'); } return; }
   const panel=document.getElementById('action-panel');
   if(!gameStarted){ panel.innerHTML=''; panel.classList.remove('open'); panelOpen=false; setTimeout(resizeCard,0); return; }
   const loc=LOCATIONS[locIdx];
@@ -920,7 +862,7 @@ function buildCharGrid(){
     card.className='char-card'+(sel?' selected':'');
     card.addEventListener('click',function(){ toggleChar(c.id); if(mp.roomCode) mpClaimChar(c.id); });
     var check=document.createElement('div'); check.className='sel-check'; check.textContent='\u2713'; card.appendChild(check);
-    var img=document.createElement('img'); img.src=IMGS[String(c.pages[0])]; img.alt=c.name; img.loading='lazy'; card.appendChild(img);
+    var img=document.createElement('img'); img.src=IMGS[String(c.pages[0])]; img.alt=c.name; img.loading='lazy'; img.setAttribute('data-charid',c.id); card.appendChild(img);
     var mag=document.createElement('button'); mag.className='mag-btn'; mag.innerHTML='<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#444" stroke-width="2.5" stroke-linecap="round"><circle cx="10" cy="10" r="7"/><line x1="15" y1="15" x2="21" y2="21"/></svg>';
     mag.addEventListener('click',function(e){ e.stopPropagation(); openZoom(IMGS[String(c.pages[0])]); });
     card.appendChild(mag);
@@ -977,7 +919,10 @@ function finishCharSelect(){
   } else {
     if(!selectedChars.length) return;
     mp.myCharId=selectedChars[0];
-    if(mp.isHost) mpFetch('/rooms/'+mp.roomCode,'PATCH',{hostPlayerCount:playerCount}).then(function(){ mpConfirmChar(); }); else mpConfirmChar();
+    var btn=document.getElementById('char-done-btn');
+    btn.textContent='WAITING FOR OTHERS...'; btn.style.opacity='0.5'; btn.style.pointerEvents='none';
+    if(mp.isHost) mpFetch('/rooms/'+mp.roomCode,'PATCH',{hostPlayerCount:playerCount}).then(function(){ mpConfirmChar(); });
+    else mpConfirmChar();
   }
 }
 
@@ -1477,7 +1422,7 @@ let inIntro=true;
 function showIntro(pos){
   introPos=pos;
   showPage(INTRO_PAGES[pos]);
-  if(mp.roomCode && mp.isHost) setTimeout(mpPushGameState,200);
+  if(mp.roomCode&&mp.isHost) setTimeout(mpPushGameState,200);
   document.getElementById('prev-btn').classList.toggle('hidden', pos===0);
   const panel=document.getElementById('action-panel');
   const isLast=(introPos===INTRO_PAGES.length-1);
