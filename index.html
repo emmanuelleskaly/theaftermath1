@@ -937,7 +937,7 @@ function buildCharGrid(){
 }
 
 function toggleChar(id){
-  if(mp.roomCode){ selectedChars=[id]; buildCharGrid(); return; }
+  if(mp.roomCode){ selectedChars=[id]; buildCharGrid(); updateCharDoneBtn(); return; }
 
   const i=selectedChars.indexOf(id);
   if(i===-1){
